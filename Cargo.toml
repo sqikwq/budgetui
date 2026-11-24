@@ -1,0 +1,11 @@
+[package]
+name = "budgetui"
+version = "0.1.0"
+edition = "2024"
+description = "Terminalowy budżet przychodów i wydatków"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+csv = "1"
+ratatui = "0.30"
