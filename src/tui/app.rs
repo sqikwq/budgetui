@@ -2,13 +2,13 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Result, anyhow, bail};
-use chrono::{Local, NaiveDate};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::model::{Ledger, MAX_COMMENT_CHARS, Transaction, TransactionRow};
 use crate::money::{format_positive_plain, parse_amount};
-use crate::service::{BudgetService, now};
+use crate::service::BudgetService;
 
 use super::ui;
 
@@ -63,6 +63,7 @@ impl Kind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FormField {
     Amount,
+    Timestamp,
     Comment,
     Type,
 }
@@ -70,7 +71,8 @@ pub(crate) enum FormField {
 impl FormField {
     fn next(self) -> Self {
         match self {
-            Self::Amount => Self::Comment,
+            Self::Amount => Self::Timestamp,
+            Self::Timestamp => Self::Comment,
             Self::Comment => Self::Type,
             Self::Type => Self::Amount,
         }
@@ -79,7 +81,8 @@ impl FormField {
     fn previous(self) -> Self {
         match self {
             Self::Amount => Self::Type,
-            Self::Comment => Self::Amount,
+            Self::Timestamp => Self::Amount,
+            Self::Comment => Self::Timestamp,
             Self::Type => Self::Comment,
         }
     }
@@ -173,6 +176,7 @@ pub(crate) struct FormState {
     pub(crate) mode: FormMode,
     pub(crate) kind: Kind,
     pub(crate) amount: TextField,
+    pub(crate) date: TextField,
     pub(crate) comment: TextField,
     pub(crate) focus: FormField,
     pub(crate) error: Option<String>,
@@ -184,6 +188,7 @@ impl FormState {
             mode: FormMode::Add,
             kind: Kind::Income,
             amount: TextField::empty(),
+            date: TextField::new(Local::now().format("%Y-%m-%d %H:%M").to_string()),
             comment: TextField::empty(),
             focus: FormField::Amount,
             error: None,
@@ -195,6 +200,13 @@ impl FormState {
             mode: FormMode::Edit { id: transaction.id },
             kind: Kind::from_amount(transaction.amount_cents),
             amount: TextField::new(format_positive_plain(transaction.amount_cents)),
+            date: TextField::new(
+                transaction
+                    .timestamp
+                    .with_timezone(&Local)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string(),
+            ),
             comment: TextField::new(transaction.comment.clone()),
             focus: FormField::Amount,
             error: None,
@@ -205,6 +217,7 @@ impl FormState {
         self.focus = focus;
         match focus {
             FormField::Amount => self.amount.end(),
+            FormField::Timestamp => self.date.end(),
             FormField::Comment => self.comment.end(),
             FormField::Type => {}
         }
@@ -265,6 +278,20 @@ impl FormState {
                 KeyCode::End => self.amount.end(),
                 _ => {}
             },
+            FormField::Timestamp => match key.code {
+                KeyCode::Char(character)
+                    if character.is_ascii_digit() || matches!(character, '-' | ':' | ' ') =>
+                {
+                    self.date.insert(character, 16);
+                }
+                KeyCode::Backspace => self.date.backspace(),
+                KeyCode::Delete => self.date.delete(),
+                KeyCode::Left => self.date.left(),
+                KeyCode::Right => self.date.right(),
+                KeyCode::Home => self.date.home(),
+                KeyCode::End => self.date.end(),
+                _ => {}
+            },
             FormField::Comment => match key.code {
                 KeyCode::Char(character)
                     if !character.is_control() && self.comment.char_count() < MAX_COMMENT_CHARS =>
@@ -293,6 +320,16 @@ impl FormState {
             Kind::Income => cents,
             Kind::Expense => -cents,
         })
+    }
+
+    fn parsed_timestamp(&self) -> Result<DateTime<FixedOffset>> {
+        let naive = NaiveDateTime::parse_from_str(self.date.value.trim(), "%Y-%m-%d %H:%M")
+            .map_err(|_| anyhow!("Nieprawidłowa data. Użyj formatu RRRR-MM-DD GG:MM."))?;
+        Local
+            .from_local_datetime(&naive)
+            .earliest()
+            .map(|timestamp| timestamp.fixed_offset())
+            .ok_or_else(|| anyhow!("Data nie istnieje w lokalnej strefie czasowej."))
     }
 }
 
@@ -610,15 +647,17 @@ impl App {
 
     fn persist_form(&self, form: &FormState) -> Result<(Transaction, Ledger, String)> {
         let amount = form.signed_amount()?;
+        let timestamp = form.parsed_timestamp()?;
         let comment = form.comment.value.clone();
         match form.mode {
             FormMode::Add => {
-                let (transaction, ledger) = self.service.add(amount, &comment, now())?;
+                let (transaction, ledger) = self.service.add(amount, &comment, timestamp)?;
                 let message = format!("Dodano transakcję #{}.", transaction.id);
                 Ok((transaction, ledger, message))
             }
             FormMode::Edit { id } => {
-                let (transaction, ledger) = self.service.update(id, amount, &comment, None)?;
+                let (transaction, ledger) =
+                    self.service.update(id, amount, &comment, Some(timestamp))?;
                 let message = format!("Zapisano transakcję #{}.", transaction.id);
                 Ok((transaction, ledger, message))
             }
@@ -746,5 +785,24 @@ impl App {
 
     pub(crate) fn set_page_size(&mut self, size: usize) {
         self.page_size = size.max(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn added_form_has_valid_default_timestamp() {
+        let form = FormState::add();
+        assert!(form.parsed_timestamp().is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_timestamp_text() {
+        let mut form = FormState::add();
+        form.date = TextField::new("2026-13-40 99:99");
+        let error = form.parsed_timestamp().unwrap_err().to_string();
+        assert!(error.contains("RRRR-MM-DD"));
     }
 }

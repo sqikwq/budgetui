@@ -1,4 +1,4 @@
-use chrono::{Datelike, Local, NaiveDate};
+use chrono::{Datelike, NaiveDate};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -314,11 +314,6 @@ fn render_form(form: &FormState, frame: &mut Frame, area: Rect) {
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let date_line = match form.mode {
-        FormMode::Add => format!("teraz ({})", Local::now().format("%Y-%m-%d %H:%M")),
-        FormMode::Edit { .. } => "bez zmian".to_string(),
-    };
-
     let mut lines = vec![
         type_line(form),
         Line::default(),
@@ -331,17 +326,20 @@ fn render_form(form: &FormState, frame: &mut Frame, area: Rect) {
         ),
         Line::default(),
         field_line(
+            "Data",
+            &form.date,
+            form.focus == FormField::Timestamp,
+            16,
+            false,
+        ),
+        Line::default(),
+        field_line(
             "Komentarz",
             &form.comment,
             form.focus == FormField::Comment,
             48,
             false,
         ),
-        Line::default(),
-        Line::from(vec![
-            Span::styled(format!("{:<12}", "Data"), Style::new().fg(MUTED)),
-            Span::styled(date_line, Style::new().fg(MUTED)),
-        ]),
         Line::default(),
     ];
 
@@ -351,7 +349,7 @@ fn render_form(form: &FormState, frame: &mut Frame, area: Rect) {
             Style::new().fg(RED).add_modifier(Modifier::BOLD),
         )),
         None => Line::from(Span::styled(
-            "Kwota dodatnia; typ zmienisz klawiszami h/l lub strzałkami.",
+            "Data: RRRR-MM-DD GG:MM. Typ: h/l lub strzałki.",
             Style::new().fg(MUTED),
         )),
     });
@@ -544,6 +542,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         help_section("Formularz"),
         help_line("Tab / Shift+Tab", "zmiana pola"),
         help_line("h / l", "zmiana typu transakcji"),
+        help_line("Data", "format RRRR-MM-DD GG:MM"),
         help_line("Enter / Esc", "zapisz / anuluj"),
         Line::default(),
         help_line("? / q / Esc", "zamknij pomoc"),
