@@ -618,7 +618,7 @@ impl App {
                 Ok((transaction, ledger, message))
             }
             FormMode::Edit { id } => {
-                let (transaction, ledger) = self.service.update(id, amount, &comment)?;
+                let (transaction, ledger) = self.service.update(id, amount, &comment, None)?;
                 let message = format!("Zapisano transakcję #{}.", transaction.id);
                 Ok((transaction, ledger, message))
             }

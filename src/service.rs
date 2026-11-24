@@ -73,6 +73,7 @@ impl BudgetService {
         id: u64,
         amount_cents: i64,
         comment: &str,
+        timestamp: Option<DateTime<FixedOffset>>,
     ) -> Result<(Transaction, Ledger)> {
         validate_amount(amount_cents).map_err(anyhow::Error::msg)?;
         let comment = sanitize_comment(comment)?;
@@ -83,6 +84,9 @@ impl BudgetService {
             .with_context(|| format!("Nie znaleziono transakcji #{id}."))?;
         transaction.amount_cents = amount_cents;
         transaction.comment = comment;
+        if let Some(timestamp) = timestamp {
+            transaction.timestamp = timestamp;
+        }
         ledger.replace(transaction.clone());
         self.store.save(&ledger)?;
         Ok((transaction, ledger))
@@ -177,7 +181,11 @@ mod tests {
         let (added, _) = service.add(10_000, "pensja", timestamp(10)).unwrap();
         assert_eq!(added.id, 1);
 
-        let (_, ledger) = service.update(1, -2_500, "korekta").unwrap();
+        let (updated, ledger) = service
+            .update(1, -2_500, "korekta", Some(timestamp(12)))
+            .unwrap();
+        assert_eq!(updated.timestamp, timestamp(12));
+        assert_eq!(updated.comment, "korekta");
         assert_eq!(ledger.total_balance_cents(), -2_500);
 
         let (removed, ledger) = service.remove_by_id(1).unwrap();
